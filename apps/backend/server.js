@@ -1,19 +1,23 @@
 'use strict';
 
 /*
- * Frontend "Hello World" instrumentado.
- * - Sirve una página con botones para saludar y para generar carga de CPU.
- * - Hace de proxy hacia el backend (evita problemas de CORS en el navegador).
- * - Expone métricas Prometheus en /metrics y emite logs JSON a stdout -> Alloy -> Loki.
+ * API "Hello World" instrumentada para el laboratorio Grafana + Prometheus + Loki.
+ * - Expone métricas Prometheus en /metrics
+ * - Emite logs en formato JSON (una línea por log) hacia stdout -> Alloy -> Loki
+ * - /load quema CPU a propósito para poder disparar la alarma de CPU > 50%
+ * - /alerts recibe el webhook de Grafana Alerting y lo registra como log (cierra el ciclo)
  */
 
 const express = require('express');
 const client = require('prom-client');
+const { Worker } = require('worker_threads');
 
-const PORT = process.env.PORT || 8080;
-const BACKEND_URL = process.env.BACKEND_URL || 'http://backend:3001';
-const SERVICE = 'frontend';
+const PORT = process.env.PORT || 3001;
+const SERVICE = 'backend';
 
+// ----------------------------------------------------------------------------
+// Logger estructurado en JSON (Alloy lo recoge desde stdout y lo manda a Loki)
+// ----------------------------------------------------------------------------
 function log(level, msg, fields = {}) {
   process.stdout.write(
     JSON.stringify({
@@ -26,103 +30,121 @@ function log(level, msg, fields = {}) {
   );
 }
 
-// Métricas
+// ----------------------------------------------------------------------------
+// Métricas Prometheus
+// ----------------------------------------------------------------------------
 const register = client.register;
-client.collectDefaultMetrics({ prefix: 'frontend_' });
+client.collectDefaultMetrics({ prefix: 'backend_' });
+
 const httpRequestsTotal = new client.Counter({
   name: 'http_requests_total',
-  help: 'Total de peticiones HTTP al frontend',
+  help: 'Total de peticiones HTTP recibidas',
   labelNames: ['method', 'route', 'status'],
 });
 
-const app = express();
+const httpRequestDuration = new client.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duración de las peticiones HTTP en segundos',
+  labelNames: ['method', 'route', 'status'],
+  buckets: [0.005, 0.01, 0.05, 0.1, 0.3, 0.5, 1, 2, 5],
+});
 
+// ----------------------------------------------------------------------------
+// App
+// ----------------------------------------------------------------------------
+const app = express();
+app.use(express.json());
+
+// Middleware: registra cada petición y alimenta las métricas
 app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
   res.on('finish', () => {
     const route = req.route ? req.route.path : req.path;
+    const seconds = Number(process.hrtime.bigint() - start) / 1e9;
     httpRequestsTotal.inc({ method: req.method, route, status: res.statusCode });
+    httpRequestDuration.observe(
+      { method: req.method, route, status: res.statusCode },
+      seconds
+    );
     log('INFO', 'http_request', {
       method: req.method,
       path: req.originalUrl,
       status: res.statusCode,
+      latency_ms: Math.round(seconds * 1000),
     });
   });
   next();
 });
 
-const PAGE = `<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Lab Observabilidad · Hello World</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 20px; }
-    h1 { font-size: 1.6rem; }
-    button { font-size: 1rem; padding: 10px 16px; margin: 6px 6px 6px 0; cursor: pointer; }
-    pre { background: #f4f4f5; padding: 12px; border-radius: 8px; overflow:auto; }
-    .hint { color:#666; font-size:.9rem; }
-  </style>
-</head>
-<body>
-  <h1>Hello World · Laboratorio de Observabilidad</h1>
-  <p class="hint">Cada acción genera métricas (Prometheus) y logs (Loki) que verás en Grafana.</p>
-  <button onclick="hello()">Saludar (API)</button>
-  <button onclick="load()">Generar carga de CPU (30s)</button>
-  <pre id="out">Listo.</pre>
-  <script>
-    async function hello() {
-      const r = await fetch('/api/hello?name=clase');
-      document.getElementById('out').textContent = JSON.stringify(await r.json(), null, 2);
-    }
-    async function load() {
-      const r = await fetch('/api/load?seconds=30');
-      document.getElementById('out').textContent =
-        JSON.stringify(await r.json(), null, 2) +
-        '\\n\\nObserva el panel de CPU en Grafana: debería superar el 50%.';
-    }
-  </script>
-</body>
-</html>`;
-
-app.get('/', (req, res) => res.type('html').send(PAGE));
-
-// Proxy hacia el backend
-app.get('/api/hello', async (req, res) => {
-  try {
-    const r = await fetch(`${BACKEND_URL}/api/hello?name=${encodeURIComponent(req.query.name || 'mundo')}`);
-    res.status(r.status).json(await r.json());
-  } catch (e) {
-    log('ERROR', 'backend_no_disponible', { detail: String(e) });
-    res.status(502).json({ error: 'backend no disponible' });
-  }
+app.get('/', (req, res) => {
+  res.json({ message: 'Hello World desde el backend', service: SERVICE });
 });
 
-app.get('/api/load', async (req, res) => {
-  try {
-    const r = await fetch(`${BACKEND_URL}/load?seconds=${parseInt(req.query.seconds, 10) || 30}`);
-    log('WARN', 'carga_cpu_solicitada_desde_frontend', {});
-    res.status(r.status).json(await r.json());
-  } catch (e) {
-    res.status(502).json({ error: 'backend no disponible' });
-  }
+app.get('/api/hello', (req, res) => {
+  const name = req.query.name || 'mundo';
+  log('INFO', 'saludo_generado', { user: name });
+  res.json({ message: `Hola, ${name}!`, from: SERVICE, time: new Date().toISOString() });
 });
 
 app.get('/healthz', (req, res) => res.json({ status: 'ok' }));
+
+// Endpoint que quema CPU en un worker thread durante N segundos (máx. 120).
+// Sirve para superar el 50% de CPU y disparar la alarma durante la clase.
+app.get('/load', (req, res) => {
+  const seconds = Math.min(parseInt(req.query.seconds, 10) || 30, 120);
+  const workerCode = `
+    const end = Date.now() + ${seconds} * 1000;
+    while (Date.now() < end) { Math.sqrt(Math.random() * Math.random()); }
+  `;
+  const worker = new Worker(workerCode, { eval: true });
+  worker.on('error', () => {});
+  log('WARN', 'cpu_load_test_started', { seconds });
+  res.json({ status: 'carga de CPU iniciada', seconds });
+});
+
+// Receptor del webhook de Grafana Alerting (opcional, cierra el ciclo)
+app.post('/alerts', (req, res) => {
+  const body = req.body || {};
+  const status = body.status || 'unknown';
+  const alerts = Array.isArray(body.alerts) ? body.alerts : [];
+  log(status === 'firing' ? 'ERROR' : 'INFO', 'grafana_alert_received', {
+    alert_status: status,
+    alert_count: alerts.length,
+    alertname: alerts[0] && alerts[0].labels && alerts[0].labels.alertname,
+  });
+  res.json({ received: true });
+});
 
 app.get('/metrics', async (req, res) => {
   res.set('Content-Type', register.contentType);
   res.end(await register.metrics());
 });
 
-app.listen(PORT, () => log('INFO', 'frontend_iniciado', { port: PORT, backend: BACKEND_URL }));
+app.listen(PORT, () => {
+  log('INFO', 'backend_iniciado', { port: PORT });
+});
 
-// Logs maquetados de frontend (vistas de página, errores de cliente)
-function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-const events = [
-  () => log('INFO', 'pagina_vista', { page: '/', session: rand(1, 999) }),
-  () => log('INFO', 'click_boton', { button: ['saludar', 'cargar'][rand(0, 1)] }),
-  () => log('WARN', 'recurso_lento', { asset: 'main.js', load_ms: rand(900, 3000) }),
-  () => log('ERROR', 'error_js_cliente', { message: 'TypeError: undefined is not a function' }),
+// ----------------------------------------------------------------------------
+// Logs: simulan actividad de negocio para llenar Loki de contenido
+// ----------------------------------------------------------------------------
+const scenarios = [
+  () => log('INFO', 'pedido_creado', { order_id: rand(1000, 9999), amount: rand(10, 500) }),
+  () => log('INFO', 'pago_procesado', { order_id: rand(1000, 9999), gateway: 'stripe' }),
+  () => log('INFO', 'usuario_autenticado', { user_id: rand(1, 200) }),
+  () => log('WARN', 'latencia_alta_en_db', { query_ms: rand(800, 2500) }),
+  () => log('WARN', 'reintento_de_pago', { order_id: rand(1000, 9999), attempt: rand(2, 4) }),
+  () => log('ERROR', 'fallo_conexion_inventario', { service: 'inventory', code: 503 }),
+  () => log('ERROR', 'excepcion_no_controlada', { trace_id: hex(8), endpoint: '/api/checkout' }),
 ];
-setInterval(() => events[rand(0, events.length - 1)](), 5000);
+
+function rand(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+function hex(n) {
+  return [...Array(n)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
+}
+
+setInterval(() => {
+  // ~70% INFO, 20% WARN, 10% ERROR aprox., eligiendo escenarios al azar
+  scenarios[rand(0, scenarios.length - 1)]();
+}, 4000);

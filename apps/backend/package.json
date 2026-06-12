@@ -1,7 +1,7 @@
 {
-  "name": "lab-frontend",
+  "name": "lab-backend",
   "version": "1.0.0",
-  "description": "Frontend Hello World instrumentado para el laboratorio de observabilidad",
+  "description": "API Hello World instrumentada para el laboratorio de observabilidad",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
