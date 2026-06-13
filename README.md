@@ -52,11 +52,11 @@ A continuación se detallan las actividades ejecutadas, alineadas directamente c
 ## Comandos Principales
 
 
-* `docker-compose up -d`
+* `docker compose up -d`
   **Descripción:** Lee el archivo docker-compose.yml, construye las imágenes si es necesario y levanta todos los contenedores del stack en segundo plano, permitiendo seguir utilizando la terminal.
 
 
-* `docker-compose down`
+* `docker compose down`
   **Descripción:** Detiene la ejecución de los contenedores del stack y los elimina de la red de Docker, liberando los puertos y recursos.
 
 
