@@ -72,7 +72,7 @@ A continuación se detallan las actividades ejecutadas, alineadas directamente c
   **Descripción:**  Para verificar que todo lo que creamos con anterioridad se haya creado correctamente.
 ---
 
-# Direcciones a verificar luego de levantar el stack 
+## Direcciones a verificar luego de levantar el stack 
 
 | Servicio | URL | Qué deberías ver |
 | :--- | :--- | :--- |
@@ -81,8 +81,121 @@ A continuación se detallan las actividades ejecutadas, alineadas directamente c
 | Grafana | http://localhost:3000 | Login (usuario `admin`, clave `admin`) [evitar cambiar contraseña]|
 | Prometheus | http://localhost:9090 | Interfaz de Prometheus |
 
-## Respuestas a las Preguntas de Evaluación
+## Creación de Dashboards en Grafana
 
+### Guía de Construcción del Dashboard
+
+Para comenzar, dirígete a Dashboards -> New -> New dashboard -> Add visualization. A continuación, crearás los siguientes 4 paneles:
+
+---
+
+### Panel 1: CPU del contenedor backend
+
+* **Data source:** Prometheus
+* **Query:** `sum(rate(node_cpu_seconds_total{mode!="idle"}[1m])) * 100`
+* **Visualización:** Time series
+* **Opciones:** En Standard options -> Unit, busca "Percent (0-100)".
+* **Umbral:** En Thresholds, añade uno en 50 y asígnale el color rojo.
+* **Título:** "CPU contenedor backend (%)"
+* *Nota:* Haz clic en Apply y guarda el panel.
+
+---
+
+### Panel 2: CPU del host
+
+* **Data source:** Prometheus
+* **Query:** `100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100)`
+* **Visualización:** Time series
+* **Opciones:** En Standard options -> Unit, busca "Percent (0-100)".
+* **Título:** "CPU del host (%)"
+* *Nota:* Haz clic en Apply y guarda el panel.
+
+---
+
+### Panel 3: Logs de la Aplicación
+
+* **Data source:** Loki
+* **Visualización:** Cámbialo de "Time series" a "Logs" (en la esquina superior derecha).
+* **Query:** `{tier="application"} | json`
+* **Título:** "Logs de aplicación (API + frontend)"
+* *Nota:* Haz clic en Apply y guarda el panel.
+
+---
+
+### Panel 4: Logs de Infraestructura
+
+* **Data source:** Loki
+* **Visualización:** Logs
+* **Query:** `{tier="infrastructure"}`
+* **Título:** "Logs de infraestructura"
+* *Nota:* Haz clic en Apply y guarda el panel.
+
+---
+
+### Guardar el Dashboard Completo
+
+Una vez creados los 4 paneles, haz clic en el botón "Save dashboard" en la parte superior de la pantalla e introduce el siguiente nombre:
+
+Nombre: Observabilidad - Nombre
+
+## Configurar la Alarma
+
+Ve a Alerting -> Alert rules -> New alert rule.
+
+Nombre: CPU backend > 50%.
+
+Query A: Selecciona Prometheus y pon la misma consulta del Panel 1:
+sum(rate(node_cpu_seconds_total{mode!="idle"}[1m])) * 100
+
+Condición: Abajo, en la sección de Threshold, configura IS ABOVE 50.
+
+Evaluación: Crea un folder y un evaluation group (ej. 10s). En Pending period pon 30s.
+
+Labels: Añade una etiqueta severity = warning.
+
+Guarda la regla (Save rule and exit).
+
+## Configurar el Webhook (Contact Point)
+
+Ve a Alerting -> Contact points -> New contact point.
+
+Nombre: Webhook Alertas o el de preferencia.
+
+Integration: Selecciona Webhook de la lista desplegable.
+
+URL: Pega la URL de tu servidor de destino o del servicio de mensajería en el caso de la practica se utilizó http://host.docker.internal:3001/alerts.
+
+Settings: Deja las opciones por defecto o añade autenticación si tu endpoint lo requiere.
+
+Probar configuración: Haz clic en Test para enviar una alerta de prueba y verificar que llegue correctamente.
+
+Guarda el punto de contacto (Save contact point).
+
+---
+### Asignar el Webhook a las Alertas
+---
+Para asegurarte de que las alarmas usen este Webhook, debes actualizar la política de rutas:
+
+1. Ve a Alerting -> Notification policies.
+2. En deafult policy (o una ruta específica), haz clic en Edit.
+3. En Default contact point, selecciona "Webhook Alertas".
+4. Guarda los cambios (Save policy).
+
+---
+### Luego de hacer todos los pasos del Webhook nos dirigimos a la alerta y modificamos su contact point por el Webhook que acabamos de crear y lo guardamos
+---
+
+## Disparar la alarma y Capturar Evidencia (Cierre)
+
+Ve a tu frontend (http://localhost:8080) y pulsa el botón "Generar carga de CPU (30s)"
+
+Ve rápido a tu Dashboard en Grafana y observa cómo la gráfica "CPU contenedor backend" sube por encima de la línea roja del 50%.
+
+Ve a Alerting -> Alert rules. Verás que la alarma pasa de estado Normal a Pending y, después de 30 segundos, a Firing.
+
+Ve al dashboard de logs de infraestructura y comprueba si llego alguno de la alerta creada
+
+## Respuestas a las Preguntas de Evaluación
 
 **1. ¿Por qué necesitamos Loki además de Prometheus si ya tenemos /metrics?**
 Porque cumplen funciones distintas y complementarias. Prometheus se encarga exclusivamente de datos cuantitativos (métricas temporales, contadores, porcentajes de CPU, memoria), lo que nos permite saber cuándo ocurre un problema y su magnitud. Loki, por su parte, gestiona datos cualitativos (logs, texto, trazas de errores). Mientras Prometheus te avisa que hay un pico de errores 500, Loki te permite leer el texto exacto de la excepción en el código para entender por qué ocurrió.
