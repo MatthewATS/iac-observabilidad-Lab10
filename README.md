@@ -72,6 +72,14 @@ A continuación se detallan las actividades ejecutadas, alineadas directamente c
   **Descripción:**  Para verificar que todo lo que creamos con anterioridad se haya creado correctamente.
 ---
 
+# Direcciones a verificar luego de levantar el stack 
+
+| Servicio | URL | Qué deberías ver |
+| :--- | :--- | :--- |
+| Frontend | http://localhost:8080 | Página "Hello World" con dos botones |
+| Backend | http://localhost:3001/metrics | Texto de métricas en formato Prometheus |
+| Grafana | http://localhost:3000 | Login (usuario `admin`, clave `admin`) [evitar cambiar contraseña]|
+| Prometheus | http://localhost:9090 | Interfaz de Prometheus |
 
 ## Respuestas a las Preguntas de Evaluación
 
