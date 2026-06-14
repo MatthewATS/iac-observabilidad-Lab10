@@ -8,7 +8,7 @@ Este proyecto consiste en la implementación de un stack completo de observabili
 Se implementó un ciclo cerrado de alertas donde el sistema de monitoreo no solo detecta anomalías, sino que notifica automáticamente a la propia aplicación mediante webhooks.
 
 
-## Actividades Realizadas y Cumplimiento de Entregables
+## Actividades Realizadas 
 
 
 A continuación se detallan las actividades ejecutadas, alineadas directamente con los criterios de evaluación del laboratorio:
@@ -51,16 +51,18 @@ A continuación se detallan las actividades ejecutadas, alineadas directamente c
 
 ## Comandos Principales
 
+  `docker compose --version`
+  **Descripción:**  Nos sirve para comprobar la version de docker que tenemos y tambien en algunos casos para saber si está instalado o no.
 
-* `docker compose up -d`
+  `docker compose up -d`
   **Descripción:** Lee el archivo docker-compose.yml, construye las imágenes si es necesario y levanta todos los contenedores del stack en segundo plano, permitiendo seguir utilizando la terminal.
 
 
-* `docker compose down`
+  `docker compose down`
   **Descripción:** Detiene la ejecución de los contenedores del stack y los elimina de la red de Docker, liberando los puertos y recursos.
 
 
-* `docker compse down"`
+  `docker compse down"`
   **Descripción:**  detener (conserva dashboards de Grafana)
 
 
